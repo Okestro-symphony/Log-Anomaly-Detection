@@ -1,26 +1,8 @@
-
-import pandas as pd
-import os
-import sys
-import datetime
-import numpy as np
-import traceback
-from hdfs import InsecureClient
-from pyspark.ml.linalg import VectorUDT
-from pyspark.sql.functions import udf
-from dependencies.spark import Spark
-from dependencies.utils import *
-from pyspark.ml.feature import CountVectorizer, StopWordsRemover
-
 def write_parquet_to_hdfs(result):
     try:
 
         now = datetime.datetime.now()
         date = now.strftime('%Y.%m.%d')
-        # txt_date = now.strftime("%Y-%m-%d %H:%M:%S")
-        # date = '2021.06.14'
-        # print(txt_date)
-        # print("데이터 프레임 length:{}".format(result.count()))
 
 
         last_time = result.select("timestamp").orderBy(F.desc("timestamp")).limit(1).rdd.map(
