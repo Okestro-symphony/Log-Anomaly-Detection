@@ -1,20 +1,4 @@
 def write_data_to_es():
-    df = update_preprocessing_data()
-    try:
-        # df 출력 스키마대로 뽑기
-        df = df[['timestamp', 'hostname', 'program', 'pid', 'path', 'message', 'score', 'is_anomaly']]
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        # df['timestamp'] = datetime.datetime.strptime(df['timestamp'], '%Y-%m-%d %H:%M:%S')
-
-    except Exception as ex:
-        print('출력 스키마 형태 구 실패 : ', ex)
-
-    # spark dataframe 변경성
-    try:
-        spark_df = spark_sess.createDataFrame(data=df)
-    except Exception as ex:
-        print('spark dataframe 변경 실패 : ', ex)
-
     try:
         # schema 형식 맞추기
         spark_df = spark_df.withColumn('score',spark_df['score'].cast("float").alias('score'))
