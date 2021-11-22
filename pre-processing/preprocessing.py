@@ -1,32 +1,3 @@
-import pandas as pd
-import os
-import sys
-import datetime
-import numpy as np
-import traceback
-from hdfs import InsecureClient
-from pyspark.ml.linalg import VectorUDT
-from pyspark.sql.functions import udf
-from dependencies.spark import Spark
-from dependencies.utils import *
-from pyspark.ml.feature import CountVectorizer, StopWordsRemover
-
-try:
-    '''
-    ES 및 spark와 연결
-    '''
-    config = ConfigParser()
-    config.read('config.ini')
-    spark = Spark(config, app_name='jhkim_job')
-    spark_sess = spark.spark_session
-    reader = spark.es_reader
-    reader = reader.option("es.read.field.exclude", "host.ip, host.mac")
-    spark_sess.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
-
-except Exception as ex:
-    print('spark_session 연결 실패 : ', ex)
-
-
 def retrieve_data_from_es():
     '''
     ES에서 로드된 데이터를 dataframe으로 저장한 후 벡터화를 진행하여 전처리를 진행하기 위한 최종적인 데이터를 생성
