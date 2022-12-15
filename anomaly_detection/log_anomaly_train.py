@@ -199,3 +199,94 @@ class Log_Anomaly_Model():
                                                                              hostname = hostname))
         res_df.fillna(0, inplace=True)
         return res_df
+
+    @timed
+    def preprocess_host(self, df_log, vect=None):
+        if vect is None:
+            vect = CountVectorizer(stop_words='english', min_df=3, max_features=self.max_features)
+            vect.fit(df_log['message'])
+        res_df = pd.DataFrame(vect.transform(df_log['message']).toarray()).astype(np.int16)
+        return res_df, vect
+
+    @timed
+    def save_vectorizer(self, vect, host):
+        os.makedirs('{project_path}/log_anomaly_model'.format(project_path=self.save_path), exist_ok=True)
+        joblib.dump(vect, '{project_path}/log_anomaly_model/{host}_CountVect.pkl'.format(project_path=self.save_path,
+                                                                                         host=host))
+        return None
+
+    @timed
+    def make_model(self, df_log):
+        df_log_host = df_log.iloc[:, :self.max_features]
+        est = IsolationForest(contamination=self.contamination)
+        est.fit(df_log_host)
+        return est
+
+    @timed
+    def save_model(self, model, hostname):
+        joblib.dump(model, '{project_path}/log_anomaly_model/{hostname}_iforest.pkl'.format(project_path=self.save_path,
+                                                                                            hostname=hostname))
+        return None
+
+    @timed
+    def save_result_es(self, res_df):
+        date = datetime.now(timezone.utc).strftime('%Y.%m.%d')
+        index = 'sym-log-anomaly-{date}'.format(date=date)
+
+        def doc_generator(df):
+            df_iter = df.iterrows()
+            for idx, document in df_iter:
+                yield {
+                    "_index": index,
+                    "_type": "_doc",
+                    "_source": filterKeys(document),
+                }
+            # raise StopIteration
+
+        target_keys = ['@timestamp', 'timestamp', 'host.hostname', 'host.id', 'log.file.path', 'message', 'program', 'anomaly_score']
+
+        def filterKeys(document):
+            return {key: document[key] for key in target_keys}
+
+        bulk(self.es, doc_generator(res_df))
+
+        return None
+
+    @timed
+    def report_result(self, start_time, result, error, end_time=None):
+
+        end_time = datetime.now(timezone.utc)
+        res = {
+            "job": "Train Log Amomaly Model",
+            "start_time": start_time,
+            "end_time": end_time,
+            "result": result,
+            "error": error
+        }
+        self.es.index(index="symphony_job_schedule", doc_type="_doc", body=res)
+        return None
+
+    @timed
+    def run(self):
+        start_time = datetime.now(timezone.utc)
+        result = 'success'
+        error = '없습니다'
+        host_list = self.retrieve_host_list()
+        for host in host_list:
+            df_log = self.load_host_data(host)
+            if len(df_log)<self.min_log_counts:
+                standardLog.sending_log('warning').warning(\
+                    f'AnoamlyDetection logs from {host} {len(df_log)} are \
+                        less than minimum log counts ({self.min_log_counts})')
+                continue
+            df_log_preprocessed, vect = self.preprocess_host(df_log)
+            self.save_vectorizer(vect, host)
+            log_anomaly_model = self.make_model(df_log_preprocessed)
+            self.save_model(log_anomaly_model, host)
+        self.report_result(start_time,result, error)
+
+
+
+if __name__ == '__main__':
+    train = Log_Anomaly_Model()
+    train.run()
