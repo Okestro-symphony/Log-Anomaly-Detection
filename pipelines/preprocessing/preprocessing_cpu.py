@@ -20,3 +20,85 @@ def preprocessing_main():
     now=datetime.datetime.now()
 
     es = Elasticsearch(hosts=f"http://{es_id}:{es_pw}@{es_host}:{es_port}/", timeout=1000)
+
+    def get_unique_hosts(es):
+        body={
+          "query": {
+            "bool":{
+          "must":[
+        {"range": {
+          "datetime": {
+            "gte": "now-3M",
+            "lte": "now"
+          }
+        }}]
+      }
+          },
+          "aggs":{
+            "keys":{
+              "terms":{
+                "field":"host.hostname.keyword",
+                "size":1000
+              }
+            }
+          },
+          "size": 0,
+        "track_total_hits": "true"
+        }
+        data = es.search(index= 'sym-metric-cpu*',body = body, track_total_hits= True, size=0)
+        hosts = [ hash_map['key'] for hash_map in data['aggregations']['keys']['buckets']]
+        return hosts
+    hosts=get_unique_hosts(es)
+    host_dict={}
+    host_dataframe_list = list()
+    for host in hosts:
+        body={
+          "query": {
+              "bool": {
+                  "must": [
+                      {"range": {
+                          "datetime": {
+                              "gte": "now-3M",
+                              "lte": "now"
+                          }
+                      }},
+                      {"term": {
+                          "host.hostname.keyword": host
+                      }}]
+              }
+          },
+          "aggs": {
+            "tmp_result" :{
+              "date_histogram": {
+                "field": "datetime",
+                "fixed_interval": "5m"
+              },
+                  "aggs": {
+                    "mean_cpu_usage": {
+                      "avg": {
+                        "field": "system.cpu.total.norm.pct"
+                  }
+                },
+                      "mean_iowait": {
+                          "avg": {
+                              "field": "system.cpu.iowait.norm.pct"
+                        }
+                    }
+              }
+            }
+          },"size": 0
+        }
+        data = es.search(index='sym-metric-cpu*', body=body, track_total_hits=True, size=0)
+        data = pd.DataFrame(data['aggregations']['tmp_result']['buckets'])
+        data['host_name']=host
+        data['mean_cpu_usage'] = data['mean_cpu_usage'].apply(lambda x: x['value'])
+        data['mean_iowait'] = data['mean_iowait'].apply(lambda x: x['value'])
+        if data.shape[0]<30:
+            continue
+        data = data.drop(['key','doc_count'],axis=1)
+        data = data.rename(columns={'key_as_string': 'datetime'})
+        data = data.fillna(data.mean())
+        host_dataframe_list.append(data)
+        host_dict[host] = len(data['mean_cpu_usage'])
+    final_df = pd.concat(host_dataframe_list, ignore_index= True)
+    final_df.to_csv(data_dir+"/cpu.csv", index=False)
