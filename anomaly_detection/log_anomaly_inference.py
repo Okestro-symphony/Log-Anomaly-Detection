@@ -43,3 +43,45 @@ class Log_Anomaly_Inference(Log_Anomaly_Model):
         }
         self.es.index(index="symphony_job_schedule", doc_type="_doc", body=res)
         return None
+
+    @Log_Anomaly_Model.timed
+    def run(self):
+        start_time = datetime.now(timezone.utc)
+        result = 'success'
+        error = '없습니다'
+        host_list = super().retrieve_host_list()
+        for host in host_list:
+            path_model = self.model_path + '/log_anomaly_model/{hostname}_iforest.pkl'.format(hostname=host)
+            path_vect = self.model_path + '/log_anomaly_model/{hostname}_CountVect.pkl'.format(hostname=host)
+            if os.path.isfile(path_model):
+                model = joblib.load(path_model)
+                vect = joblib.load(path_vect)
+                df_log = super().load_host_data(host, self.gte, self.now)
+                if len(df_log) < self.min_log_counts:
+                    standardLog.sending_log('warning').warning(f'AnoamlyDetection logs from {host} {len(df_log)} are less than minimum log counts ({self.min_log_counts})')
+                    continue
+                df_log_preprocessed, vect = super().preprocess_host(df_log, vect)
+
+                res_df = self.retrieve_anomaly_score(model, df_log_preprocessed)
+
+                df_log['anomaly_score'] = res_df
+
+                anomaly_count = len(df_log[df_log['anomaly_score'] < 0])
+                log_count = len(df_log)
+                anomaly_pct = anomaly_count/log_count*100
+
+                df_log = df_log[df_log['anomaly_score'] < 0]
+                df_log['anomaly_score'] = df_log['anomaly_score'] * 2 + 1
+                df_log['timestamp'] = pd.to_datetime(df_log['@timestamp']).astype(int)//10**6
+                df_log['datetime'] = df_log['@timestamp']
+                standardLog.sending_log('warning').warning(f'AnoamlyDetection logs from {anomaly_count}({anomaly_pct}%) anomaly logs detected in {log_count} total logs in {host}')
+                super().save_result_es(df_log)
+            else:
+                standardLog.sending_log('warning').warning(f'AnoamlyDetection model not found for {host}')
+                continue
+        self.report_result(start_time, result, error)
+        return None
+
+if __name__ == '__main__':
+    inference = Log_Anomaly_Inference()
+    inference.run()
