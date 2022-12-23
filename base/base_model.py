@@ -101,7 +101,7 @@ class ForcastBasedModel(nn.Module):
             return pred
 
     def __evaluate_recst(self, test_loader):
-        self.eval()  # set to evaluation mode
+        self.eval()
         with torch.no_grad():
             y_pred = []
             store_dict = defaultdict(list)
@@ -140,3 +140,63 @@ class ForcastBasedModel(nn.Module):
             }
             logging.info({k: f"{v:.3f}" for k, v in eval_results.items()})
             return eval_results
+
+
+    def __input2device(self, batch_input):
+        if "label" in batch_input:
+            return {"features":batch_input['features'].to(self.device), "label":batch_input['label'].to(self.device)}
+        else:
+            return {"features":batch_input['features'].to(self.device)}
+        
+
+    def save_model(self):
+        logging.info("Saving model to {}".format(self.model_save_file))
+        try:
+            torch.save(
+                self.state_dict(),
+                self.model_save_file,
+                _use_new_zipfile_serialization=False,
+            )
+        except:
+            torch.save(self.state_dict(), self.model_save_file)
+
+    def load_model(self):
+        logging.info("Loading model from {}".format(self.model_save_file))
+        self.load_state_dict(torch.load(self.model_save_file, map_location=self.device))
+
+    def fit(self, train_loader, epoches=10, learning_rate=1.0e-3):
+        self.to(self.device)
+        best_loss = float("inf")
+        worse_count = 0
+        for epoch in tqdm(range(1, epoches + 1)):
+            epoch_time_start = time.time()
+            model = self.train()
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            batch_cnt = 0
+            epoch_loss = 0
+            for batch_input in train_loader:
+                loss = model.forward(self.__input2device(batch_input))["loss"]
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                epoch_loss += loss.item()
+                batch_cnt += 1
+            
+            epoch_loss = epoch_loss / batch_cnt
+
+            if best_loss > epoch_loss:
+                print(f"new score: {epoch_loss}")
+                best_loss = epoch_loss
+                worse_count = 0
+                self.save_model()
+            else:
+                worse_count += 1
+                if worse_count >= self.patience:
+                    logging.info("Early stop at epoch: {}".format(epoch))
+                    break
+
+            epoch_time_elapsed = time.time() - epoch_time_start
+            logging.info(
+                "Epoch {}/{}, training loss: {:.8f} [{:.2f}s]".format(epoch, epoches, epoch_loss, epoch_time_elapsed)
+            )
+            self.time_tracker["train"] = epoch_time_elapsed
